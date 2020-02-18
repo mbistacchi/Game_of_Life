@@ -3,16 +3,13 @@ import numpy as np
 from scipy.signal import correlate2d
 
 COLOUR_MAP = {"alive": (255, 20, 20), "dead": (20,15,0), "background": (100, 100, 100)}
-SQUARE_SIZE = 20 # cell square side length
-MARGIN = 2
-
 
 class Grid:
-    """ Handles Displaying """
+    """ Handles Displaying and the underlying numpy array"""
     def __init__(self, size):
         self.size = size
         self.cells = np.zeros((size, size), dtype=int) # 2D array; all dead by default
-        self.cells[4:7,5] = 1
+        self.cells[4:7,5] = 1 # demo "blinker"
 
     def display(self):
         for i, row in enumerate(self.cells):
@@ -26,10 +23,15 @@ class Grid:
 
     def sq_to_pixs(self, x, y):
         """ Converts index of square to pixel coords for pygame to use"""
-        px = (x+1)*(2*MARGIN + SQUARE_SIZE) - MARGIN - SQUARE_SIZE
-        py = (y+1)*(2*MARGIN + SQUARE_SIZE) - MARGIN
+        px = (MARGIN + SQUARE_SIZE) * x + MARGIN
+        py = (MARGIN + SQUARE_SIZE) * y + MARGIN
         return (px, py)
 
+    def flip_cell(self, mouse):
+        # first find the corresponding [i,j] index for the mouse position
+        xi = mouse[0] // (SQUARE_SIZE + MARGIN)
+        yi = mouse[1] // (SQUARE_SIZE + MARGIN)
+        self.cells[xi, yi] = not self.cells[xi, yi]
 
 class GoL:
     """ Game Engine """
@@ -68,20 +70,48 @@ class GoL:
                 neighbour_sum = np.sum(neighbours) - cell_val
                 neighbour_sum_grid[i,j] = neighbour_sum
         return neighbour_sum_grid
-                
 
-w, h = 600, 600 # pixel coords
+
+class Game:
+    """ Handles pygame events, pausing etc """
+    def __init__(self, size):
+        self.done = False
+        self.paused = False
+        self.gol = GoL(size)
+
+    def run(self):
+        self.event_handler()
+        self.gol.grid.display()
+        if not self.paused:
+            self.gol.evolve(self.gol.loop_method)
+            
+
+    def event_handler(self):
+        for event in pg.event.get():
+            if event.type == pg.QUIT:
+                self.done = True
+            elif event.type == pg.MOUSEBUTTONDOWN:
+                if event.button == 3: # right click
+                    self.paused = not self.paused
+                elif event.button == 1: # left click
+                    mouse = pg.mouse.get_pos()
+                    self.gol.grid.flip_cell(mouse)
+
+
 """ Main """
+SQUARE_SIZE = 10 # cell square side length
+MARGIN = 1
+FPS = 10
+w, h = 1000, 1000 # pixel coords
+
 pg.init()
 clock = pg.time.Clock()
-FPS = 20
 screen = pg.display.set_mode([w, h])
 screen.fill(COLOUR_MAP["background"])
-gol = GoL(20)
-while True:
-    clock.tick(FPS)
-    gol.evolve(gol.loop_method)
-    gol.grid.display()
+game = Game(100)
+while not game.done:
+    game.run()
     pg.display.update()
+    clock.tick(FPS)
 pg.quit()
     
