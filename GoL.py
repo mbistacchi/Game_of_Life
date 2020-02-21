@@ -1,6 +1,8 @@
 import pygame as pg
 import numpy as np
 from scipy.signal import correlate2d
+import time
+from multiprocessing import Process, cpu_count, Queue
 
 COLOUR_MAP = {"alive": (255, 20, 20), "dead": (20,15,0), "background": (100, 100, 100)}
 
@@ -55,14 +57,17 @@ class GoL:
         self.grid.cells = new_grid
 
     def conv_method(self):
-        """ Uses 2D convolution across the entire grid to work out the neighbour sum at each cell """
-        kernel = np.array(  [1,1,1],
+        """ Uses 2D convolution (from scipy) across the entire grid to work out the neighbour sum at each cell """
+        kernel = np.array([
+                            [1,1,1],
                             [1,0,1],
-                            [1,1,1] )
+                            [1,1,1]],
+                            dtype=int)
         neighbour_sum_grid = correlate2d(self.grid.cells, kernel, mode='same')
         return neighbour_sum_grid
 
     def loop_method(self):
+        """ Also works out neighbour sum for each cell, using a more naive loop method """
         neighbour_sum_grid = np.zeros_like(self.grid.cells) # copy
         for i, row in enumerate(self.grid.cells):
             for j, cell_val in enumerate(row):
@@ -71,20 +76,38 @@ class GoL:
                 neighbour_sum_grid[i,j] = neighbour_sum
         return neighbour_sum_grid
 
+    def multi_loop_method(self):
+        procs = []
+        for i in range(cpu_count()-1):
+            proc = Process(target=self.loop_method)
+            proc.start()
+            procs.append(proc)
+
+        for proc in procs:
+            proc.join()
 
 class Game:
-    """ Handles pygame events, pausing etc """
-    def __init__(self, size):
+    """ Handles pygame events, pausing etc; along with timing the code """
+    def __init__(self, size, method_num):
         self.done = False
         self.paused = False
         self.gol = GoL(size)
+        self.time_list = []
+        self.method_num = method_num
+        self.methods = {1: self.gol.conv_method, 2: self.gol.loop_method, 3: self.gol.multi_loop_method}
 
     def run(self):
         self.event_handler()
         self.gol.grid.display()
         if not self.paused:
-            self.gol.evolve(self.gol.loop_method)
-            
+            t0 = time.time()
+            self.gol.evolve(self.methods[self.method_num])
+            t1 = time.time()
+            self.time_list.append(t1 - t0)
+
+    def time_analysis(self):
+        print("Mean time per update: {}".format(np.mean(self.time_list)))
+        print("Standard deviation of time to update: {}".format(np.std(self.time_list)))
 
     def event_handler(self):
         for event in pg.event.get():
@@ -98,20 +121,26 @@ class Game:
                     self.gol.grid.flip_cell(mouse)
 
 
-""" Main """
+""" -------------------- Main ---------------------------------- """
 SQUARE_SIZE = 10 # cell square side length
 MARGIN = 1
+SQUARES = 50
 FPS = 10
-w, h = 1000, 1000 # pixel coords
+w = h = 2 + (SQUARE_SIZE+MARGIN) * SQUARES # pixels
+screen = pg.display.set_mode([w, h]) # pygame does not like this within main()
 
-pg.init()
-clock = pg.time.Clock()
-screen = pg.display.set_mode([w, h])
-screen.fill(COLOUR_MAP["background"])
-game = Game(100)
-while not game.done:
-    game.run()
-    pg.display.update()
-    clock.tick(FPS)
-pg.quit()
-    
+def main():
+    pg.init()
+    clock = pg.time.Clock()
+    screen.fill(COLOUR_MAP["background"])
+    method = 3 #int(input("1 for convolution, 2 for loop")) #why tf is this not working? Environment issues?
+    game = Game(SQUARES, method)
+    while not game.done:
+        game.run()
+        pg.display.update()
+        clock.tick(FPS)
+    game.time_analysis()
+    pg.quit()
+
+if __name__ == "__main__":
+    main()
