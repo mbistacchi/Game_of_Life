@@ -93,12 +93,12 @@ class GoL:
         cores = cpu_count()
         procs = []
         slices = []
-        if cores == 2: # for my VM, need to impliment generalised method for more cores
-            half_grid_point = int(SQUARES / 2)
-            slices.append(self.grid.cells[0:half_grid_point])
-            slices.append(self.grid.cells[half_grid_point:])
+        if cores > 1:
+            nth_grid_point = int(SQUARES / cores)
+            slices.append(self.grid.cells[0:nth_grid_point])
+            slices.append(self.grid.cells[nth_grid_point:])
         else:
-            Exception
+            raise Exception("Need more than one core for multiprocessing!")
 
         for sl in slices:
             proc = Process(target=self.loop_method, args=(sl,))
@@ -107,6 +107,7 @@ class GoL:
 
         for proc in procs:
             proc.join()
+
 
 class Game:
     """ Handles pygame events, pausing etc; along with timing the code """
