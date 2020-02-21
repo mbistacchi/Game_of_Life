@@ -4,6 +4,10 @@ from scipy.signal import correlate2d
 import time
 from multiprocessing import Process, cpu_count, Queue
 
+SQUARE_SIZE = 10 # cell square side length
+MARGIN = 1
+SQUARES = 50 # Total squares = SQUARES**2
+FPS = 10
 COLOUR_MAP = {"alive": (255, 20, 20), "dead": (20,15,0), "background": (100, 100, 100)}
 
 class Grid:
@@ -24,7 +28,7 @@ class Grid:
                 pg.draw.rect(screen, colour, (xp, yp, SQUARE_SIZE, SQUARE_SIZE), 0)
 
     def sq_to_pixs(self, x, y):
-        """ Converts index of square to pixel coords for pygame to use"""
+        """ Converts index of square (nice human readable graph coords) to pixel coords for pygame to use"""
         px = (MARGIN + SQUARE_SIZE) * x + MARGIN
         py = (MARGIN + SQUARE_SIZE) * y + MARGIN
         return (px, py)
@@ -42,6 +46,9 @@ class GoL:
         self.grid = Grid(size)
 
     def evolve(self, neigbour_sum_func):
+        """ Input: function which gives an array of the sum of all neighbours for each cell.
+        Could also multiprocess?
+        """
         new_grid = np.zeros_like(self.grid.cells) # start with everything dead, only need to test for keeping/turning alive
         neighbour_sum_array = neigbour_sum_func()
         for i in range(self.size):
@@ -66,20 +73,35 @@ class GoL:
         neighbour_sum_grid = correlate2d(self.grid.cells, kernel, mode='same')
         return neighbour_sum_grid
 
-    def loop_method(self):
+    def loop_method(self, partition=None):
         """ Also works out neighbour sum for each cell, using a more naive loop method """
-        neighbour_sum_grid = np.zeros_like(self.grid.cells) # copy
-        for i, row in enumerate(self.grid.cells):
+        if partition is None:
+            cells = self.grid.cells # no multithreading, just work on entire grid
+        else:
+            cells = partition # just work on a set section of the grid
+
+        neighbour_sum_grid = np.zeros_like(cells) # copy
+        for i, row in enumerate(cells):
             for j, cell_val in enumerate(row):
-                neighbours = self.grid.cells[i-1:i+2, j-1:j+2]
+                neighbours = cells[i-1:i+2, j-1:j+2]
                 neighbour_sum = np.sum(neighbours) - cell_val
                 neighbour_sum_grid[i,j] = neighbour_sum
         return neighbour_sum_grid
 
     def multi_loop_method(self):
+        """ Use Python multiprocessing to somewhat parallelize the loop_method """
+        cores = cpu_count()
         procs = []
-        for i in range(cpu_count()-1):
-            proc = Process(target=self.loop_method)
+        slices = []
+        if cores == 2: # for my VM, need to impliment generalised method for more cores
+            half_grid_point = int(SQUARES / 2)
+            slices.append(self.grid.cells[0:half_grid_point])
+            slices.append(self.grid.cells[half_grid_point:])
+        else:
+            Exception
+
+        for sl in slices:
+            proc = Process(target=self.loop_method, args=(sl,))
             proc.start()
             procs.append(proc)
 
@@ -122,10 +144,6 @@ class Game:
 
 
 """ -------------------- Main ---------------------------------- """
-SQUARE_SIZE = 10 # cell square side length
-MARGIN = 1
-SQUARES = 50
-FPS = 10
 w = h = 2 + (SQUARE_SIZE+MARGIN) * SQUARES # pixels
 screen = pg.display.set_mode([w, h]) # pygame does not like this within main()
 
@@ -133,7 +151,7 @@ def main():
     pg.init()
     clock = pg.time.Clock()
     screen.fill(COLOUR_MAP["background"])
-    method = 3 #int(input("1 for convolution, 2 for loop")) #why tf is this not working? Environment issues?
+    method = 3 #int(input("1 for convolution, 2 for loop, 3 for multiprocessing loop")) #why tf is this not working? Environment issues?
     game = Game(SQUARES, method)
     while not game.done:
         game.run()
