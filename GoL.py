@@ -6,8 +6,8 @@ from multiprocessing import Process, cpu_count, Queue
 
 SQUARE_SIZE = 10 # cell square side length
 MARGIN = 1
-SQUARES = 50 # Total squares = SQUARES**2
-FPS = 10
+SQUARES = 80 # Total squares = SQUARES**2
+FPS = 20
 COLOUR_MAP = {"alive": (255, 20, 20), "dead": (20,15,0), "background": (100, 100, 100)}
 
 class Grid:
@@ -63,6 +63,7 @@ class GoL:
 
         self.grid.cells = new_grid
 
+    """ Neighbour sum grid calculation methods """
     def conv_method(self):
         """ Uses 2D convolution (from scipy) across the entire grid to work out the neighbour sum at each cell """
         kernel = np.array([
@@ -73,14 +74,12 @@ class GoL:
         neighbour_sum_grid = correlate2d(self.grid.cells, kernel, mode='same')
         return neighbour_sum_grid
 
-    def loop_method(self, partition=None):
-        """ Also works out neighbour sum for each cell, using a more naive loop method """
-        if partition is None:
-            cells = self.grid.cells # no multithreading, just work on entire grid
-        else:
-            cells = partition # just work on a set section of the grid
-
-        neighbour_sum_grid = np.zeros_like(cells) # copy
+    def loop_method(self):
+        """ Did have this and multi_method_worker integrated with control logic to differentiate,
+        but that logic seemed to slow down this version
+        """
+        cells = self.grid.cells
+        neighbour_sum_grid = np.zeros_like(cells)
         for i, row in enumerate(cells):
             for j, cell_val in enumerate(row):
                 neighbours = cells[i-1:i+2, j-1:j+2]
@@ -88,26 +87,61 @@ class GoL:
                 neighbour_sum_grid[i,j] = neighbour_sum
         return neighbour_sum_grid
 
-    def multi_loop_method(self):
-        """ Use Python multiprocessing to somewhat parallelize the loop_method """
+    def multi_method_worker(self, partition):
+        """ partition here is a tuple, the first index being a number for which sector it is
+         i.e. 0 is top partition
+         """
         cores = cpu_count()
-        procs = []
-        slices = []
+        if partition[0] == 0:
+            cells = partition[1][:-1] # strip bottom of partition only
+        elif partition[0] == cores - 1:
+            cells = partition[1][1:] # strip top of partition only
+        else:
+            cells = partition[1][1:-1] # strip both top and bottom of partition
+
+        neighbour_sum_grid = np.zeros_like(cells)
+        for i, row in enumerate(cells):
+            for j, cell_val in enumerate(row):
+                neighbours = partition[i-1:i+2, j-1:j+2]
+                neighbour_sum = np.sum(neighbours) - cell_val
+                neighbour_sum_grid[i,j] = neighbour_sum
+
+        self.queue.put(neighbour_sum_grid)
+
+    def multi_loop_method(self):
+        """ Use Python multiprocessing """
+        neighbour_sum_grid = []
+        self.queue = Queue()
+        cores = cpu_count()
         if cores > 1:
-            nth_grid_point = int(SQUARES / cores)
-            slices.append(self.grid.cells[0:nth_grid_point])
-            slices.append(self.grid.cells[nth_grid_point:])
+            # create row slices/partitions of the grid
+            partitions = [] # list of tuples (core index, actual cells)
+            nth_point = int(SQUARES / cores)
+            for c in range(cores):
+                start = c * nth_point
+                end = (c+1) * nth_point
+                if c == cores - 1:
+                    partitions.append((c, self.grid.cells[start-1:])) # final slice, just go to the end. -1 to get above neighbours
+                elif c == 0:
+                    partitions.append((c, self.grid.cells[0:end+1])) # catches indexing (0-1) = -1
+                else:
+                    partitions.append((c, self.grid.cells[start-1:end+1])) # +1 to get below neighbours
         else:
             raise Exception("Need more than one core for multiprocessing!")
 
-        for sl in slices:
-            proc = Process(target=self.loop_method, args=(sl,))
+        procs = []
+        for part in partitions:
+            proc = Process(target=self.multi_method_worker, args=(part,))
             proc.start()
             procs.append(proc)
 
         for proc in procs:
             proc.join()
+            grid_section = self.queue.get()
+            neighbour_sum_grid.append(grid_section)
 
+        return np.asarray(neighbour_sum_grid)
+            
 
 class Game:
     """ Handles pygame events, pausing etc; along with timing the code """
@@ -159,6 +193,7 @@ def main():
         pg.display.update()
         clock.tick(FPS)
     game.time_analysis()
+    pg.display.quit() # helps kill windows when code fails
     pg.quit()
 
 if __name__ == "__main__":
