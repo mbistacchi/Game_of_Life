@@ -7,7 +7,7 @@ from multiprocessing import Process, cpu_count, Queue
 SQUARE_SIZE = 10 # cell square side length
 MARGIN = 1
 SQUARES = 80 # Total squares = SQUARES**2
-FPS = 20
+FPS = 5
 COLOUR_MAP = {"alive": (255, 20, 20), "dead": (20,15,0), "background": (100, 100, 100)}
 
 class Grid:
@@ -40,7 +40,9 @@ class Grid:
         self.cells[xi, yi] = not self.cells[xi, yi]
 
 class GoL:
-    """ Game Engine """
+    """ Game Engine - calculates the sum of a cells neighbours through one of the various _methods,
+    and evolves the grid through evolve()
+     """
     def __init__(self, size):
         self.size = size
         self.grid = Grid(size)
@@ -75,7 +77,7 @@ class GoL:
         return neighbour_sum_grid
 
     def loop_method(self):
-        """ Did have this and multi_method_worker integrated with control logic to differentiate,
+        """ Did have this and multi_method_worker integrated in 1 function with control logic to differentiate,
         but that logic seemed to slow down this version
         """
         cells = self.grid.cells
@@ -87,7 +89,7 @@ class GoL:
                 neighbour_sum_grid[i,j] = neighbour_sum
         return neighbour_sum_grid
 
-    def multi_method_worker(self, partition):
+    def multi_method_worker(self, partition, queue):
         """ partition here is a tuple, the first index being a number for which sector it is
          i.e. 0 is top partition
          """
@@ -102,20 +104,20 @@ class GoL:
         neighbour_sum_grid = np.zeros_like(cells)
         for i, row in enumerate(cells):
             for j, cell_val in enumerate(row):
-                neighbours = partition[i-1:i+2, j-1:j+2]
+                neighbours = partition[1][i-1:i+2, j-1:j+2]
                 neighbour_sum = np.sum(neighbours) - cell_val
                 neighbour_sum_grid[i,j] = neighbour_sum
 
-        self.queue.put(neighbour_sum_grid)
+        queue.put(neighbour_sum_grid)
 
     def multi_loop_method(self):
         """ Use Python multiprocessing """
         neighbour_sum_grid = []
-        self.queue = Queue()
+        queue = Queue()
         cores = cpu_count()
         if cores > 1:
             # create row slices/partitions of the grid
-            partitions = [] # list of tuples (core index, actual cells)
+            partitions = [] # list of tuples (core index, cells)
             nth_point = int(SQUARES / cores)
             for c in range(cores):
                 start = c * nth_point
@@ -131,16 +133,27 @@ class GoL:
 
         procs = []
         for part in partitions:
-            proc = Process(target=self.multi_method_worker, args=(part,))
+            proc = Process(target=self.multi_method_worker, args=(part,queue))
             proc.start()
             procs.append(proc)
 
         for proc in procs:
             proc.join()
-            grid_section = self.queue.get()
+            grid_section = queue.get()
             neighbour_sum_grid.append(grid_section)
 
-        return np.asarray(neighbour_sum_grid)
+        def reduce_matrix(matrix): 
+            # definitely a more numpyonic way of doing this, but it works for now
+            new_matrix = []
+            for i in matrix:
+                for j in i:
+                    new_matrix.append(j)
+            return np.asarray(new_matrix)
+
+        neighbour_sum_grid = reduce_matrix(neighbour_sum_grid)
+        print(len(neighbour_sum_grid))
+        print(neighbour_sum_grid)
+        return neighbour_sum_grid
             
 
 class Game:
